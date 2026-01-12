@@ -5,13 +5,13 @@ import PyPDF2
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Agente de Elite", page_icon="🤖", layout="wide")
 
-# CSS para visual moderno
+# CSS para visual moderno - CORRIGIDO AQUI
 st.markdown("""
     <style>
     .titulo-principal { color: #1E3A8A; text-align: center; font-weight: bold; }
     .stButton>button { border-radius: 10px; background-color: #007bff; color: white; }
     </style>
-    """, unsafe_allow_input=True)
+    """, unsafe_allow_html=True)
 
 # --- SISTEMA DE LOGIN SEGURO ---
 def check_password():
@@ -20,9 +20,8 @@ def check_password():
     if st.session_state.authenticated:
         return True
 
-    # Verifica se as chaves existem nos secrets para não dar erro
     if "LOGIN_USER" not in st.secrets or "LOGIN_PASSWORD" not in st.secrets:
-        st.error("Erro: LOGIN_USER ou LOGIN_PASSWORD não configurados nos Secrets do Streamlit.")
+        st.error("Erro: Configure LOGIN_USER e LOGIN_PASSWORD nos Secrets do Streamlit.")
         return False
 
     col1, col2, col3 = st.columns([1,2,1])
@@ -48,7 +47,6 @@ if check_password():
     def carregar_modelo():
         try:
             modelos = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            # Prioriza o flash 1.5
             for m in modelos:
                 if 'gemini-1.5-flash' in m: return genai.GenerativeModel(m)
             return genai.GenerativeModel(modelos[0]) if modelos else None
@@ -58,7 +56,7 @@ if check_password():
     model = carregar_modelo()
 
     # 2. Interface Principal
-    st.markdown("<h1>🤖 Assistente de Inteligência</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center;'>🤖 Assistente de Inteligência</h1>", unsafe_allow_html=True)
     st.divider()
 
     # Barra Lateral
@@ -109,13 +107,13 @@ if check_password():
 
         with st.chat_message("assistant"):
             if model is None:
-                st.error("Erro: IA não disponível. Verifique a chave API.")
+                st.error("IA não disponível.")
             else:
                 instrucao = f"Base: {conhecimento}\nArquivo: {texto_do_arquivo}\nPergunta: {prompt}"
                 try:
-                    with st.spinner('Pensando...'):
+                    with st.spinner('Consultando base...'):
                         response = model.generate_content(instrucao)
                         st.markdown(response.text)
                         st.session_state.messages.append({"role": "assistant", "content": response.text})
                 except Exception as e:
-                    st.error(f"Erro na IA: {e}")
+                    st.error(f"Erro: {e}")
