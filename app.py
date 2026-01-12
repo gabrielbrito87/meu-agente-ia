@@ -7,7 +7,7 @@ import PyPDF2
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Agente de Elite ⚡", page_icon="🤖", layout="wide")
 
-# --- LOGIN ---
+# --- LOGIN (Mantido) ---
 def check_password():
     if st.session_state.get("authenticated"): return True
     st.title("🔐 Acesso Restrito")
@@ -23,24 +23,32 @@ def check_password():
 if check_password():
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
-    # --- GERENCIADOR DE CACHE (VERSÃO ESTÁVEL) ---
+    # --- GERENCIADOR DE CACHE DINÂMICO ---
     @st.cache_resource(ttl=3600)
-    def configurar_ai(texto_base):
-        # NOME TÉCNICO EXATO (Essencial para evitar o erro 404 no cache)
-        MODELO_ESTAVEL = "models/gemini-1.5-flash-001"
-        CACHE_DISPLAY_NAME = "cache_equipe_v3"
+    def configurar_ai_dinamico(texto_base):
+        CACHE_DISPLAY_NAME = "cache_equipe_final"
         
         try:
-            # 1. Verifica se já existe um cache ativo para economizar
+            # 1. Busca automática pelo modelo que suporta cache em 2026
+            modelo_valido = None
+            for m in genai.list_models():
+                # Procuramos versões estáveis (com números no final) que sejam Flash
+                if 'gemini-1.5-flash' in m.name and any(char.isdigit() for char in m.name):
+                    modelo_valido = m.name
+                    break
+            
+            if not modelo_valido:
+                modelo_valido = "models/gemini-1.5-flash" # Último recurso
+
+            # 2. Verifica se já existe um cache para não gastar
             for c in caching.CachedContent.list():
                 if c.display_name == CACHE_DISPLAY_NAME:
-                    st.sidebar.success("⚡ Memória de Cache Ativa")
                     return genai.GenerativeModel.from_cached_content(cached_content=c)
             
-            # 2. Se não existir, cria usando a versão estável 001
-            with st.spinner("🧠 Carregando base na memória prioritária..."):
+            # 3. Cria o cache com o modelo que encontramos
+            with st.spinner(f"⚡ Otimizando memória com {modelo_valido}..."):
                 novo_cache = caching.CachedContent.create(
-                    model=MODELO_ESTAVEL,
+                    model=modelo_valido,
                     display_name=CACHE_DISPLAY_NAME,
                     contents=[texto_base],
                     ttl=datetime.timedelta(hours=24),
@@ -48,21 +56,24 @@ if check_password():
                 return genai.GenerativeModel.from_cached_content(cached_content=novo_cache)
         
         except Exception as e:
-            # Fallback caso o cache falhe (garante que o app não pare)
-            st.sidebar.warning(f"Usando modo normal (sem cache): {e}")
+            st.sidebar.warning(f"Modo normal (sem cache): {e}")
             return genai.GenerativeModel("models/gemini-1.5-flash")
 
     # --- CARREGAMENTO ---
-    with open("base.txt", "r", encoding="utf-8") as f:
-        base_conteudo = f.read()
+    try:
+        with open("base.txt", "r", encoding="utf-8") as f:
+            base_conteudo = f.read()
+    except:
+        st.error("Arquivo base.txt não encontrado.")
+        st.stop()
 
-    model = configurar_ai(base_conteudo)
+    model = configurar_ai_dinamico(base_conteudo)
 
     # --- INTERFACE ---
     st.markdown("<h1 style='text-align: center;'>🤖 Assistente Inteligente</h1>", unsafe_allow_html=True)
     
     with st.sidebar:
-        st.header("⚙️ Ferramentas")
+        st.header("⚙️ Painel de Controle")
         st.info(f"Base: {len(base_conteudo):,} caracteres")
         pdf_file = st.file_uploader("Auditar PDF", type=["pdf"])
         if st.button("Sair"):
@@ -74,11 +85,10 @@ if check_password():
     if pdf_file:
         reader = PyPDF2.PdfReader(pdf_file)
         extra_text = "\n".join([p.extract_text() for p in reader.pages])
-        st.toast(f"PDF {pdf_file.name} carregado!")
+        st.toast("PDF carregado!")
 
     # --- CHAT ---
     if "messages" not in st.session_state: st.session_state.messages = []
-    
     for m in st.session_state.messages:
         with st.chat_message(m["role"]): st.markdown(m["content"])
 
@@ -88,10 +98,12 @@ if check_password():
 
         with st.chat_message("assistant"):
             try:
-                # O comando agora é leve, a base já está "decorada" no modelo
-                input_final = f"Contexto Adicional: {extra_text}\n\nPergunta: {prompt}"
+                input_final = f"Contexto Extra: {extra_text}\n\nPergunta: {prompt}"
                 response = model.generate_content(input_final)
                 st.markdown(response.text)
                 st.session_state.messages.append({"role": "assistant", "content": response.text})
             except Exception as e:
-                st.error(f"Erro na resposta: {e}")
+                if "429" in str(e):
+                    st.error("Limite atingido. Aguarde 1 minuto.")
+                else:
+                    st.error(f"Erro: {e}")
