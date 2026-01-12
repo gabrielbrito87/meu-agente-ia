@@ -1,7 +1,5 @@
 import streamlit as st
 import google.generativeai as genai
-from google.generativeai import caching
-import datetime
 import PyPDF2
 
 # --- 1. CONFIGURAÇÃO DA PÁGINA ---
@@ -22,51 +20,32 @@ def check_password():
             st.error("Dados incorretos.")
     return False
 
-# Só executa o código abaixo se o login estiver correto
 if check_password():
+    # Configura a chave da API
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
-    # --- 3. CONFIGURAÇÃO DA IA ---
-    @st.cache_resource(ttl=3600)
-    def configurar_ai(texto_base):
-        # Mudamos para 'latest' para garantir compatibilidade
-        MODELO_NOME = "gemini-1.5-flash-latest" 
-        
-        try:
-            CACHE_NAME = "cache_agente_elite"
-            # Tenta listar caches
-            for c in caching.CachedContent.list():
-                if c.display_name == CACHE_NAME:
-                    return genai.GenerativeModel.from_cached_content(cached_content=c)
-            
-            with st.spinner("⚡ Otimizando base..."):
-                novo_cache = caching.CachedContent.create(
-                    model=f"models/{MODELO_NOME}", # Com prefixo para o cache
-                    display_name=CACHE_NAME,
-                    contents=[texto_base],
-                    ttl=datetime.timedelta(hours=24),
-                )
-                return genai.GenerativeModel.from_cached_content(cached_content=novo_cache)
-        except Exception:
-            # Plano B: Tenta sem o prefixo 'models/' se o cache falhar
-            return genai.GenerativeModel(model_name=MODELO_NOME)
+    # --- 3. CONFIGURAÇÃO DA IA (Simplificada para evitar Erro 404) ---
+    # Removido o sistema de 'caching' que estava causando o erro 404
+    @st.cache_resource
+    def carregar_modelo():
+        # Usamos o nome mais estável possível
+        return genai.GenerativeModel("gemini-1.5-flash")
 
     # --- 4. CARREGAR ARQUIVO BASE ---
     try:
         with open("base.txt", "r", encoding="utf-8") as f:
             base_conteudo = f.read()
     except Exception:
-        st.error("Arquivo base.txt não encontrado.")
-        st.stop()
+        base_conteudo = "Instruções base não encontradas."
+        st.sidebar.warning("Aviso: base.txt não encontrado.")
 
-    model = configurar_ai(base_conteudo)
+    model = carregar_modelo()
 
     # --- 5. INTERFACE ---
     st.markdown("<h1 style='text-align: center;'>🤖 Assistente Inteligente</h1>", unsafe_allow_html=True)
     
     with st.sidebar:
         st.header("⚙️ Painel")
-        st.info(f"Base: {len(base_conteudo):,} caracteres")
         pdf_file = st.file_uploader("Upload PDF Extra", type=["pdf"])
         if st.button("Sair"):
             st.session_state.authenticated = False
@@ -75,37 +54,44 @@ if check_password():
     # Processar PDF
     extra_text = ""
     if pdf_file:
-        reader = PyPDF2.PdfReader(pdf_file)
-        extra_text = "\n".join([p.extract_text() for p in reader.pages if p.extract_text()])
-        st.toast("PDF lido!")
+        try:
+            reader = PyPDF2.PdfReader(pdf_file)
+            extra_text = "\n".join([p.extract_text() for p in reader.pages if p.extract_text()])
+            st.toast("PDF lido com sucesso!")
+        except:
+            st.error("Erro ao ler o PDF.")
 
     # --- 6. CHAT ---
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
-    # Mostrar mensagens anteriores
+    # Mostrar histórico
     for m in st.session_state.messages:
         with st.chat_message(m["role"]):
             st.markdown(m["content"])
 
-    # Campo de nova pergunta
+    # Nova pergunta
     if prompt := st.chat_input("Sua dúvida..."):
-        # Adiciona ao histórico
         st.session_state.messages.append({"role": "user", "content": prompt})
         
-        # Mostra a pergunta do usuário (Aqui estava o erro!)
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        # Resposta da IA
         with st.chat_message("assistant"):
             try:
-                # Combina tudo (PDF + Pergunta)
-                ctx = f"Contexto PDF: {extra_text}\n\nPergunta: {prompt}" if extra_text else prompt
-                response = model.generate_content(ctx)
+                # Criamos um "Prompt de Sistema" enviando a base.txt junto
+                # Isso substitui o cache de forma simples e funcional
+                prompt_completo = (
+                    f"Instruções/Base de Conhecimento:\n{base_conteudo}\n\n"
+                    f"Contexto do PDF adicional:\n{extra_text}\n\n"
+                    f"Pergunta do usuário: {prompt}"
+                )
                 
-                # Exibe a resposta
-                st.markdown(response.text)
-                st.session_state.messages.append({"role": "assistant", "content": response.text})
+                response = model.generate_content(prompt_completo)
+                
+                if response.text:
+                    st.markdown(response.text)
+                    st.session_state.messages.append({"role": "assistant", "content": response.text})
             except Exception as e:
-                st.error(f"Erro ao responder: {e}")
+                st.error(f"Erro na conexão com o Google Gemini: {e}")
+                st.info("Dica: Verifique se sua API Key é válida no Google AI Studio.")
