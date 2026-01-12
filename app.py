@@ -1,44 +1,53 @@
 import streamlit as st
 import google.generativeai as genai
 
-st.title("🤖 Assistente da Equipe")
+st.set_page_config(page_title="Assistente da Equipe", page_icon="🤖")
+st.title("🤖 Assistente Colaborativo")
 
 # 1. Configurando a Chave
 try:
-    minha_chave = st.secrets["GOOGLE_API_KEY"]
-    genai.configure(api_key=minha_chave)
-    # Mudamos o nome para 'gemini-1.5-flash' (garantindo que não haja erros de digitação)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+    
+    # Truque para evitar o erro 404: vamos tentar o nome mais comum
+    # Se falhar, ele avisará
+    model_name = 'gemini-1.5-flash' 
+    model = genai.GenerativeModel(model_name)
 except Exception as e:
-    st.error(f"Erro na chave ou configuração: {e}")
+    st.error(f"Erro de configuração: {e}")
 
-# 2. Lendo a base
-with open("base.txt", "r", encoding="utf-8") as f:
-    conhecimento = f.read()
+# 2. Lendo a base de conhecimento
+try:
+    with open("base.txt", "r", encoding="utf-8") as f:
+        conhecimento = f.read()
+except FileNotFoundError:
+    st.error("Arquivo base.txt não encontrado no GitHub!")
+    conhecimento = ""
 
-# --- Interface do Chat ---
-if "mensagens" not in st.session_state:
-    st.session_state.mensagens = []
+# --- Chat ---
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-for msg in st.session_state.mensagens:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
-if pergunta := st.chat_input("Como posso ajudar?"):
-    st.session_state.mensagens.append({"role": "user", "content": pergunta})
+if prompt := st.chat_input("Pergunte algo sobre a base ou envie um link..."):
+    st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
-        st.markdown(pergunta)
+        st.markdown(prompt)
 
     with st.chat_message("assistant"):
         try:
-            # Instrução reforçada para a IA
-            prompt_sistema = f"Você é um assistente da equipe. Use esta base para responder: {conhecimento}"
+            # Enviamos a base de conhecimento como 'instrução de sistema'
+            instrucao = f"Você é um assistente da equipe. Baseie-se exclusivamente nisto: {conhecimento}"
             
-            # Chamada da resposta
-            response = model.generate_content([prompt_sistema, pergunta])
+            # Gerando a resposta
+            response = model.generate_content([instrucao, prompt])
             
-            st.markdown(response.text)
-            st.session_state.mensagens.append({"role": "assistant", "content": response.text})
+            resposta_texto = response.text
+            st.markdown(resposta_texto)
+            st.session_state.messages.append({"role": "assistant", "content": resposta_texto})
+            
         except Exception as e:
-            st.error(f"Ocorreu um erro ao gerar a resposta: {e}")
-            st.info("Dica: Verifique se sua chave do Google no Streamlit Secrets está correta.")
+            st.error(f"Erro ao conversar com a IA: {e}")
+            st.info("Dica: Verifique se sua chave no Streamlit Secrets está correta e sem aspas extras.")
