@@ -1,68 +1,76 @@
 import streamlit as st
 import google.generativeai as genai
 
-st.set_page_config(page_title="Agente da Equipe", layout="wide")
+st.set_page_config(page_title="Agente de Equipe", layout="wide")
+st.title("🤖 Assistente Colaborativo")
 
 # 1. Configuração da API
+if "GOOGLE_API_KEY" not in st.secrets:
+    st.error("Falta a chave nos Secrets!")
+    st.stop()
+
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
-# 2. Tentar ler a base e medir o tamanho dela
+# 2. Tentar carregar o modelo com o nome completo
+# O prefixo 'models/' ajuda a evitar o erro 404
+try:
+    model = genai.GenerativeModel('models/gemini-1.5-flash')
+except Exception as e:
+    st.error(f"Erro ao carregar modelo: {e}")
+
+# 3. Ler a base de conhecimento
 try:
     with open("base.txt", "r", encoding="utf-8") as f:
         conhecimento = f.read()
-    tamanho_base = len(conhecimento)
+    st.sidebar.success(f"✅ Base carregada ({len(conhecimento)} caracteres)")
 except:
-    conhecimento = "ERRO: Arquivo base.txt não encontrado no GitHub."
-    tamanho_base = 0
+    conhecimento = "Base não encontrada."
+    st.sidebar.error("❌ Arquivo base.txt não encontrado.")
 
-# 3. Criar o modelo com INSTRUÇÕES RÍGIDAS
-# Aqui dizemos que ela DEVE usar a base
-instrucao_obrigatoria = f"""
-Você é um assistente exclusivo da equipe. 
-SUA ÚNICA FONTE DE VERDADE É ESTA BASE DE CONHECIMENTO:
----
-{conhecimento}
----
-REGRAS:
-1. Responda APENAS com base no texto acima.
-2. Se a informação não estiver na base, diga: "Essa informação não consta na nossa base de conhecimento".
-3. Se um arquivo for enviado, compare-o rigorosamente com a base acima.
-"""
-
-model = genai.GenerativeModel(
-    model_name='gemini-1.5-flash',
-    system_instruction=instrucao_obrigatoria
-)
-
-# --- Interface ---
-st.title("🤖 Agente Especialista")
-st.sidebar.info(f"Tamanho da Base: {tamanho_base} caracteres")
-
+# 4. Chat
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Upload de arquivo (opcional)
-arquivo = st.sidebar.file_uploader("Enviar arquivo para conferência", type=["txt", "pdf"])
+# Upload de arquivo
+arquivo = st.sidebar.file_uploader("Enviar arquivo", type=["txt", "pdf"])
 conteudo_arquivo = ""
 if arquivo:
-    conteudo_arquivo = arquivo.read().decode("utf-8", errors="ignore")
-    st.sidebar.success("Arquivo pronto para análise")
+    try:
+        conteudo_arquivo = arquivo.read().decode("utf-8")
+        st.sidebar.info("Arquivo lido com sucesso.")
+    except:
+        st.sidebar.error("Não consegui ler este arquivo.")
 
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-if prompt := st.chat_input("Perqunte algo sobre a base..."):
+if prompt := st.chat_input("Pergunte algo..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        # Se tiver um arquivo, a gente avisa a IA no momento da pergunta
-        pergunta_completa = prompt
-        if conteudo_arquivo:
-            pergunta_completa = f"Considere este arquivo enviado: {conteudo_arquivo}\n\nPergunta: {prompt}"
+        # Criamos um "Super Prompt" que junta tudo
+        prompt_completo = f"""
+        Você é um assistente que responde APENAS com base na base de conhecimento abaixo.
         
-        response = model.generate_content(pergunta_completa)
-        st.markdown(response.text)
-        st.session_state.messages.append({"role": "assistant", "content": response.text})
+        BASE DE CONHECIMENTO:
+        {conhecimento}
+        
+        ARQUIVO ENVIADO PELO USUÁRIO AGORA:
+        {conteudo_arquivo}
+        
+        PERGUNTA DO USUÁRIO:
+        {prompt}
+        
+        Responda de forma clara e profissional.
+        """
+        
+        try:
+            # Gerar resposta de forma simples
+            response = model.generate_content(prompt_completo)
+            st.markdown(response.text)
+            st.session_state.messages.append({"role": "assistant", "content": response.text})
+        except Exception as e:
+            st.error(f"Erro na API: {e}")
