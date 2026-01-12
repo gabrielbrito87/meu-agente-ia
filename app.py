@@ -98,4 +98,4 @@ if check_password():
     # Entrada do usuário
     if prompt := st.chat_input("Como posso ajudar?"):
         st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.
+        with st.chat_message("user"):
