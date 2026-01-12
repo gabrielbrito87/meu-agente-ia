@@ -1,38 +1,67 @@
 import streamlit as st
 import google.generativeai as genai
 
-st.set_page_config(page_title="Agente Colaborativo", layout="wide")
+st.set_page_config(page_title="Agente da Equipe", layout="wide")
+st.title("🤖 Assistente de Consultas e Qualidade")
 
-# 1. Configuração da API
+# 1. Configuração Segura da API
+if "GOOGLE_API_KEY" not in st.secrets:
+    st.error("Configure a chave GOOGLE_API_KEY nos Secrets do Streamlit!")
+    st.stop()
+
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-model = genai.GenerativeModel('gemini-1.5-flash')
 
-# 2. Carregar a Base de Conhecimento Gigante
+# 2. FUNÇÃO MÁGICA: Localizar um modelo que funcione na sua conta
+@st.cache_resource
+def carregar_modelo_seguro():
+    try:
+        # Pede ao Google uma lista de todos os modelos que sua chave pode usar
+        modelos_disponiveis = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        
+        if not modelos_disponiveis:
+            return None, "Nenhum modelo de chat encontrado para esta chave."
+        
+        # Tenta priorizar o Flash 1.5, mas se não achar, pega o primeiro que aparecer
+        selecionado = None
+        for m in modelos_disponiveis:
+            if "gemini-1.5-flash" in m:
+                selecionado = m
+                break
+        
+        if not selecionado:
+            selecionado = modelos_disponiveis[0]
+            
+        return genai.GenerativeModel(selecionado), selecionado
+    except Exception as e:
+        return None, str(e)
+
+model, nome_do_modelo = carregar_modelo_seguro()
+
+if model is None:
+    st.error(f"Erro crítico de conexão: {nome_do_modelo}")
+    st.info("Dica: Verifique se sua chave API no Google AI Studio está ativa e em um projeto 'Free' ou 'Pay-as-you-go'.")
+    st.stop()
+else:
+    st.caption(f"✅ Conectado com sucesso via: {nome_do_modelo}")
+
+# 3. Carregar a Base de Conhecimento (Seus 734k caracteres)
 try:
     with open("base.txt", "r", encoding="utf-8") as f:
         conhecimento = f.read()
-    st.sidebar.success(f"✅ Base de Dados: {len(conhecimento)} caracteres")
+    st.sidebar.success(f"📚 Base: {len(conhecimento)} caracteres carregados.")
 except:
     conhecimento = ""
     st.sidebar.error("Arquivo base.txt não encontrado.")
 
-# 3. ÁREA DE AVALIAÇÃO DE ARQUIVOS (O que você pediu)
+# 4. Área de Upload para Avaliação
 st.sidebar.divider()
-st.sidebar.header("📁 Avaliar Novo Documento")
-arquivo_equipe = st.sidebar.file_uploader("Suba o arquivo para conferência", type=["txt", "pdf"])
+arquivo_subido = st.sidebar.file_uploader("Avaliar novo documento", type=["txt", "pdf"])
+texto_arquivo = ""
+if arquivo_subido:
+    texto_arquivo = arquivo_subido.read().decode("utf-8", errors="ignore")
+    st.sidebar.info("Documento pronto para análise.")
 
-texto_do_arquivo = ""
-if arquivo_equipe:
-    # Se for PDF, este código simples lê como texto (funciona para PDFs de texto)
-    try:
-        texto_do_arquivo = arquivo_equipe.read().decode("utf-8", errors="ignore")
-        st.sidebar.info(f"Arquivo '{arquivo_equipe.name}' carregado.")
-    except:
-        st.sidebar.error("Erro ao ler o conteúdo do arquivo.")
-
-# 4. Interface do Chat
-st.title("🤖 Assistente de Consultas e Qualidade")
-
+# 5. Chat
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
@@ -40,35 +69,28 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-if prompt := st.chat_input("Como posso ajudar com a base de dados hoje?"):
+if prompt := st.chat_input("Como posso ajudar hoje?"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        # Preparamos o comando para a IA
-        contexto_instrucao = f"""
-        Você é um consultor especialista da equipe.
+        # Super instrução para a IA
+        instrucao = f"""
+        Você é um consultor da equipe. Use a base abaixo como sua única fonte.
         
-        INFORMAÇÃO DE APOIO (Sua Base de Conhecimento):
+        BASE DE CONHECIMENTO:
         {conhecimento}
         
-        DOCUMENTO PARA AVALIAR (Enviado pelo usuário agora):
-        {texto_do_arquivo if texto_do_arquivo else "Nenhum arquivo enviado."}
+        ARQUIVO PARA AVALIAR:
+        {texto_arquivo if texto_arquivo else "Nenhum arquivo enviado."}
         
-        PERGUNTA/SOLICITAÇÃO DO USUÁRIO:
-        {prompt}
-        
-        INSTRUÇÕES:
-        1. Se o usuário pedir para avaliar o documento enviado, compare-o com a Base de Conhecimento e aponte erros ou melhorias.
-        2. Se o usuário fizer uma pergunta, responda APENAS com base na Base de Conhecimento.
-        3. Seja profissional, claro e objetivo.
+        PERGUNTA: {prompt}
         """
         
         try:
-            # Enviamos tudo para o Gemini
-            response = model.generate_content(contexto_instrucao)
+            response = model.generate_content(instrucao)
             st.markdown(response.text)
             st.session_state.messages.append({"role": "assistant", "content": response.text})
         except Exception as e:
-            st.error(f"Erro ao processar: {e}")
+            st.error(f"Erro ao gerar resposta: {e}")
