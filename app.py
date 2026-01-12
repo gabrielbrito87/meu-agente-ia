@@ -2,43 +2,29 @@ import streamlit as st
 import google.generativeai as genai
 import PyPDF2
 
-# --- CONFIGURAÇÃO DA PÁGINA E DESIGN ---
+# --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Agente de Elite", page_icon="🤖", layout="wide")
 
-# CSS para deixar o visual mais moderno
+# CSS para visual moderno
 st.markdown("""
     <style>
-    .main {
-        background-color: #f5f7f9;
-    }
-    .stButton>button {
-        width: 100%;
-        border-radius: 10px;
-        height: 3em;
-        background-color: #007bff;
-        color: white;
-    }
-    .stTextInput>div>div>input {
-        border-radius: 10px;
-    }
-    .titulo-principal {
-        color: #1E3A8A;
-        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
-        font-weight: bold;
-        text-align: center;
-        padding-bottom: 20px;
-    }
+    .titulo-principal { color: #1E3A8A; text-align: center; font-weight: bold; }
+    .stButton>button { border-radius: 10px; background-color: #007bff; color: white; }
     </style>
     """, unsafe_allow_input=True)
 
-# --- SISTEMA DE LOGIN (Mantido) ---
+# --- SISTEMA DE LOGIN SEGURO ---
 def check_password():
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
     if st.session_state.authenticated:
         return True
 
-    # Tela de Login com Visual Centralizado
+    # Verifica se as chaves existem nos secrets para não dar erro
+    if "LOGIN_USER" not in st.secrets or "LOGIN_PASSWORD" not in st.secrets:
+        st.error("Erro: LOGIN_USER ou LOGIN_PASSWORD não configurados nos Secrets do Streamlit.")
+        return False
+
     col1, col2, col3 = st.columns([1,2,1])
     with col2:
         st.markdown("<h1 class='titulo-principal'>🛡️ Acesso Interno</h1>", unsafe_allow_html=True)
@@ -50,61 +36,55 @@ def check_password():
                     st.session_state.authenticated = True
                     st.rerun()
                 else:
-                    st.error("Credenciais inválidas.")
+                    st.error("Usuário ou senha incorretos.")
     return False
 
+# Execução do App
 if check_password():
-    # --- CABEÇALHO DO APP ---
-    col_logo, col_titulo = st.columns([1, 8])
-    with col_logo:
-        st.markdown("# 🤖")
-    with col_titulo:
-        st.markdown("<h1 style='margin-bottom: 0;'>Assistente de Inteligência Colaborativa</h1>", unsafe_allow_html=True)
-        st.caption("Especialista em base de conhecimento e auditoria de documentos")
-    
-    st.divider()
-
-    # --- CONFIGURAÇÃO IA ---
+    # 1. Configuração IA
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
     
     @st.cache_resource
     def carregar_modelo():
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                return genai.GenerativeModel(m.name)
-        return None
+        try:
+            modelos = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+            # Prioriza o flash 1.5
+            for m in modelos:
+                if 'gemini-1.5-flash' in m: return genai.GenerativeModel(m)
+            return genai.GenerativeModel(modelos[0]) if modelos else None
+        except:
+            return None
 
     model = carregar_modelo()
 
-    # --- BARRA LATERAL ESTILIZADA ---
+    # 2. Interface Principal
+    st.markdown("<h1>🤖 Assistente de Inteligência</h1>", unsafe_allow_html=True)
+    st.divider()
+
+    # Barra Lateral
     with st.sidebar:
-        st.image("https://cdn-icons-png.flaticon.com/512/4712/4712035.png", width=80)
         st.header("Painel de Controle")
-        
         try:
             with open("base.txt", "r", encoding="utf-8") as f:
                 conhecimento = f.read()
-            st.success(f"📚 Base Ativa: {len(conhecimento)} carac.")
+            st.success(f"📚 Base: {len(conhecimento)} carac.")
         except:
-            conhecimento = ""
-            st.error("Base não encontrada.")
-
-        st.divider()
-        st.subheader("📁 Auditoria de Arquivos")
-        arquivo_equipe = st.sidebar.file_uploader("Upload (PDF/TXT)", type=["txt", "pdf"])
+            conhecimento = "Base não encontrada."
+            st.error("Arquivo base.txt não encontrado.")
         
         st.divider()
-        if st.button("Encerrar Sessão"):
+        arquivo_equipe = st.file_uploader("Upload (PDF/TXT)", type=["txt", "pdf"])
+        
+        if st.button("Sair"):
             st.session_state.authenticated = False
             st.rerun()
 
-    # --- PROCESSAMENTO DE ARQUIVO ---
+    # 3. Processamento de Arquivos
     def extrair_texto_pdf(arquivo):
-        pdf_reader = PyPDF2.PdfReader(arquivo)
-        texto = ""
-        for pagina in pdf_reader.pages:
-            texto += pagina.extract_text()
-        return texto
+        try:
+            pdf_reader = PyPDF2.PdfReader(arquivo)
+            return "".join([p.extract_text() for p in pdf_reader.pages])
+        except: return "Erro ao ler PDF."
 
     texto_do_arquivo = ""
     if arquivo_equipe:
@@ -112,33 +92,30 @@ if check_password():
             texto_do_arquivo = extrair_texto_pdf(arquivo_equipe)
         else:
             texto_do_arquivo = arquivo_equipe.read().decode("utf-8", errors="ignore")
-        st.info(f"🔎 Analisando o documento: **{arquivo_equipe.name}**")
+        st.info(f"🔎 Analisando: {arquivo_equipe.name}")
 
-    # --- CHAT ESTILIZADO ---
+    # 4. Chat
     if "messages" not in st.session_state:
-        st.session_state.messages = [
-            {"role": "assistant", "content": "Olá! Sou seu assistente de elite. No que posso ajudar hoje?"}
-        ]
+        st.session_state.messages = []
 
-    # Container para o chat ficar organizado
-    chat_container = st.container()
-    with chat_container:
-        for msg in st.session_state.messages:
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
 
-    if prompt := st.chat_input("Digite sua dúvida aqui..."):
+    if prompt := st.chat_input("Sua dúvida..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
         with st.chat_message("assistant"):
-            instrucao = f"Você é um consultor. Use a base: {conhecimento}. Arquivo atual: {texto_do_arquivo}. Pergunta: {prompt}"
-            try:
-                # Efeito de carregamento para ficar mais bonito
-                with st.spinner('Consultando base de conhecimento...'):
-                    response = model.generate_content(instrucao)
-                    st.markdown(response.text)
-                    st.session_state.messages.append({"role": "assistant", "content": response.text})
-            except Exception as e:
-                st.error(f"Ocorreu um erro: {e}")
+            if model is None:
+                st.error("Erro: IA não disponível. Verifique a chave API.")
+            else:
+                instrucao = f"Base: {conhecimento}\nArquivo: {texto_do_arquivo}\nPergunta: {prompt}"
+                try:
+                    with st.spinner('Pensando...'):
+                        response = model.generate_content(instrucao)
+                        st.markdown(response.text)
+                        st.session_state.messages.append({"role": "assistant", "content": response.text})
+                except Exception as e:
+                    st.error(f"Erro na IA: {e}")
