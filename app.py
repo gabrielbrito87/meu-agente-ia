@@ -1,119 +1,68 @@
 import streamlit as st
 import google.generativeai as genai
+from google.generativeai import caching
+import datetime
 import PyPDF2
 
-# --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Agente de Elite", page_icon="🤖", layout="wide")
+# --- CONFIGURAÇÃO ---
+st.set_page_config(page_title="Agente com Cache", layout="wide")
+genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
-# CSS para visual moderno - CORRIGIDO AQUI
-st.markdown("""
-    <style>
-    .titulo-principal { color: #1E3A8A; text-align: center; font-weight: bold; }
-    .stButton>button { border-radius: 10px; background-color: #007bff; color: white; }
-    </style>
-    """, unsafe_allow_html=True)
+# --- LÓGICA DE CACHE (A Mágica) ---
+@st.cache_resource
+def gerenciar_contexto_cache(texto_base):
+    """Cria ou recupera um cache de contexto para a base gigante"""
+    try:
+        # Nome identificador para o seu cache (ajuste se mudar a base)
+        cache_name = "cache_equipe_v1"
+        
+        # Tentamos listar caches existentes para ver se o nosso já está lá
+        for c in caching.CachedContent.list():
+            if c.display_name == cache_name:
+                return c
 
-# --- SISTEMA DE LOGIN SEGURO ---
-def check_password():
-    if "authenticated" not in st.session_state:
-        st.session_state.authenticated = False
-    if st.session_state.authenticated:
-        return True
+        # Se não existir, criamos um novo
+        # O cache expira em 1 hora por padrão (pode aumentar até 48h)
+        meu_cache = caching.CachedContent.create(
+            model='models/gemini-1.5-flash-001',
+            display_name=cache_name,
+            system_instruction=(
+                "Você é um consultor especialista. Use estritamente esta base "
+                "de conhecimento para responder e analisar documentos."
+            ),
+            contents=[texto_base],
+            ttl=datetime.timedelta(hours=1),
+        )
+        return meu_cache
+    except Exception as e:
+        st.error(f"Erro ao gerenciar cache: {e}")
+        return None
 
-    if "LOGIN_USER" not in st.secrets or "LOGIN_PASSWORD" not in st.secrets:
-        st.error("Erro: Configure LOGIN_USER e LOGIN_PASSWORD nos Secrets do Streamlit.")
-        return False
+# --- CARREGAR BASE ---
+with open("base.txt", "r", encoding="utf-8") as f:
+    base_conhecimento = f.read()
 
-    col1, col2, col3 = st.columns([1,2,1])
-    with col2:
-        st.markdown("<h1 class='titulo-principal'>🛡️ Acesso Interno</h1>", unsafe_allow_html=True)
-        with st.container(border=True):
-            usuario = st.text_input("Usuário")
-            senha = st.text_input("Senha", type="password")
-            if st.button("Entrar no Sistema"):
-                if usuario == st.secrets["LOGIN_USER"] and senha == st.secrets["LOGIN_PASSWORD"]:
-                    st.session_state.authenticated = True
-                    st.rerun()
-                else:
-                    st.error("Usuário ou senha incorretos.")
-    return False
+# Ativa o cache (Sua base de 734k caracteres entra aqui)
+cache_ativo = gerenciar_contexto_cache(base_conhecimento)
 
-# Execução do App
-if check_password():
-    # 1. Configuração IA
-    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+# --- INICIALIZAR MODELO COM CACHE ---
+if cache_ativo:
+    model = genai.GenerativeModel.from_cached_content(cached_content=cache_ativo)
+else:
+    # Caso o cache falhe, usa o modo normal (mais caro)
+    model = genai.GenerativeModel('gemini-1.5-flash')
+
+# --- RESTO DO APP (LOGIN E INTERFACE) ---
+# [O código de Login e Upload permanece o mesmo que usamos antes]
+
+# --- MODIFICAÇÃO NO MOMENTO DA RESPOSTA ---
+# No campo onde a IA gera a resposta (generate_content):
+if prompt := st.chat_input("Sua dúvida..."):
+    # ... código de histórico ...
     
-    @st.cache_resource
-    def carregar_modelo():
-        try:
-            modelos = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            for m in modelos:
-                if 'gemini-1.5-flash' in m: return genai.GenerativeModel(m)
-            return genai.GenerativeModel(modelos[0]) if modelos else None
-        except:
-            return None
-
-    model = carregar_modelo()
-
-    # 2. Interface Principal
-    st.markdown("<h1 style='text-align: center;'>🤖 Assistente de Inteligência</h1>", unsafe_allow_html=True)
-    st.divider()
-
-    # Barra Lateral
-    with st.sidebar:
-        st.header("Painel de Controle")
-        try:
-            with open("base.txt", "r", encoding="utf-8") as f:
-                conhecimento = f.read()
-            st.success(f"📚 Base: {len(conhecimento)} carac.")
-        except:
-            conhecimento = "Base não encontrada."
-            st.error("Arquivo base.txt não encontrado.")
-        
-        st.divider()
-        arquivo_equipe = st.file_uploader("Upload (PDF/TXT)", type=["txt", "pdf"])
-        
-        if st.button("Sair"):
-            st.session_state.authenticated = False
-            st.rerun()
-
-    # 3. Processamento de Arquivos
-    def extrair_texto_pdf(arquivo):
-        try:
-            pdf_reader = PyPDF2.PdfReader(arquivo)
-            return "".join([p.extract_text() for p in pdf_reader.pages])
-        except: return "Erro ao ler PDF."
-
-    texto_do_arquivo = ""
-    if arquivo_equipe:
-        if arquivo_equipe.type == "application/pdf":
-            texto_do_arquivo = extrair_texto_pdf(arquivo_equipe)
-        else:
-            texto_do_arquivo = arquivo_equipe.read().decode("utf-8", errors="ignore")
-        st.info(f"🔎 Analisando: {arquivo_equipe.name}")
-
-    # 4. Chat
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-
-    if prompt := st.chat_input("Sua dúvida..."):
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
-
-        with st.chat_message("assistant"):
-            if model is None:
-                st.error("IA não disponível.")
-            else:
-                instrucao = f"Base: {conhecimento}\nArquivo: {texto_do_arquivo}\nPergunta: {prompt}"
-                try:
-                    with st.spinner('Consultando base...'):
-                        response = model.generate_content(instrucao)
-                        st.markdown(response.text)
-                        st.session_state.messages.append({"role": "assistant", "content": response.text})
-                except Exception as e:
-                    st.error(f"Erro: {e}")
+    # Agora a instrução é MUITO curta, pois a base já está "decorada" na IA
+    contexto_pergunta = f"Pergunta: {prompt}. \nArquivo enviado para analisar: {texto_do_arquivo}"
+    
+    with st.spinner('Consultando cache de memória...'):
+        response = model.generate_content(contexto_pergunta)
+        st.markdown(response.text)
