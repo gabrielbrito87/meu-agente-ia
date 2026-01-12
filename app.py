@@ -27,19 +27,20 @@ if check_password():
     @st.cache_resource(ttl=3600)
     def configurar_ai_dinamico(texto_base):
         CACHE_DISPLAY_NAME = "cache_equipe_final"
-        # Usamos uma versão específica que suporta cache obrigatoriamente
-        MODELO_ESTAVEL = "models/gemini-1.5-flash-001"
+        
+        # Em 2026, tentamos primeiro o nome estável simples
+        MODELO_NOME = "gemini-1.5-flash" 
         
         try:
-            # 1. Verifica se já existe um cache para evitar gastos duplicados
+            # 1. Tenta listar caches existentes para reaproveitar
             for c in caching.CachedContent.list():
                 if c.display_name == CACHE_DISPLAY_NAME:
                     return genai.GenerativeModel.from_cached_content(cached_content=c)
             
-            # 2. Cria o cache com o modelo específico -001
-            with st.spinner(f"⚡ Otimizando memória com {MODELO_ESTAVEL}..."):
+            # 2. Tenta criar o cache (Isso requer Billing/Faturamento ativo no Google Cloud)
+            with st.spinner("⚡ Otimizando memória (Context Caching)..."):
                 novo_cache = caching.CachedContent.create(
-                    model=MODELO_ESTAVEL,
+                    model=f"models/{MODELO_NOME}",
                     display_name=CACHE_DISPLAY_NAME,
                     contents=[texto_base],
                     ttl=datetime.timedelta(hours=24),
@@ -47,19 +48,21 @@ if check_password():
                 return genai.GenerativeModel.from_cached_content(cached_content=novo_cache)
         
         except Exception as e:
-            # Se o cache falhar (por falta de billing ou erro de modelo), usamos o modo normal
-            # Importante: O nome do modelo aqui também deve ser o completo
-            st.sidebar.warning("Modo normal ativado (sem cache).")
-            return genai.GenerativeModel(MODELO_ESTAVEL)
+            # SE DER ERRO 404 OU QUALQUER OUTRO NO CACHE:
+            # Ele cai aqui e usa o modelo normal, sem frescuras.
+            st.sidebar.warning("Aviso: Usando modo direto (sem otimização de cache).")
+            # Tentamos o modelo sem o prefixo 'models/' caso o erro persista
+            return genai.GenerativeModel(model_name=MODELO_NOME)
 
     # --- CARREGAMENTO ---
     try:
         with open("base.txt", "r", encoding="utf-8") as f:
             base_conteudo = f.read()
     except:
-        st.error("Arquivo base.txt não encontrado.")
+        st.error("Arquivo base.txt não encontrado no GitHub.")
         st.stop()
 
+    # Inicializa o modelo (com ou sem cache, dependendo do sucesso acima)
     model = configurar_ai_dinamico(base_conteudo)
 
     # --- INTERFACE ---
@@ -67,36 +70,32 @@ if check_password():
     
     with st.sidebar:
         st.header("⚙️ Painel de Controle")
-        st.info(f"Base: {len(base_conteudo):,} caracteres")
-        pdf_file = st.file_uploader("Auditar PDF", type=["pdf"])
+        st.info(f"Base carregada: {len(base_conteudo):,} caracteres")
+        pdf_file = st.file_uploader("Auditar PDF Extra", type=["pdf"])
         if st.button("Sair"):
             st.session_state.authenticated = False
             st.rerun()
 
-    # Processamento PDF
+    # Processamento de PDF (se houver)
     extra_text = ""
     if pdf_file:
-        reader = PyPDF2.PdfReader(pdf_file)
-        extra_text = "\n".join([p.extract_text() for p in reader.pages])
-        st.toast("PDF carregado!")
+        try:
+            reader = PyPDF2.PdfReader(pdf_file)
+            extra_text = "\n".join([p.extract_text() for p in reader.pages if p.extract_text()])
+            st.toast("PDF lido com sucesso!")
+        except Exception as e:
+            st.error(f"Erro ao ler PDF: {e}")
 
-    # --- CHAT ---
-    if "messages" not in st.session_state: st.session_state.messages = []
+    # --- SISTEMA DE CHAT ---
+    if "messages" not in st.session_state: 
+        st.session_state.messages = []
+
+    # Mostra o histórico
     for m in st.session_state.messages:
-        with st.chat_message(m["role"]): st.markdown(m["content"])
+        with st.chat_message(m["role"]): 
+            st.markdown(m["content"])
 
-    if prompt := st.chat_input("Sua dúvida..."):
+    # Entrada do usuário
+    if prompt := st.chat_input("Como posso ajudar?"):
         st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"): st.markdown(prompt)
-
-        with st.chat_message("assistant"):
-            try:
-                input_final = f"Contexto Extra: {extra_text}\n\nPergunta: {prompt}"
-                response = model.generate_content(input_final)
-                st.markdown(response.text)
-                st.session_state.messages.append({"role": "assistant", "content": response.text})
-            except Exception as e:
-                if "429" in str(e):
-                    st.error("Limite atingido. Aguarde 1 minuto.")
-                else:
-                    st.error(f"Erro: {e}")
+        with st.
