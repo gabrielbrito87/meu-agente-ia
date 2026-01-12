@@ -1,22 +1,18 @@
 import streamlit as st
-from openai import OpenAI
+import google.generativeai as genai
 
 # Título do site
-st.title("🤖 Assistente da Equipe")
-st.write("Consulte nossa base ou envie um arquivo para avaliação.")
+st.title("🤖 Assistente da Equipe (Google Gemini)")
 
-# Conectando com a inteligência (chave secreta)
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+# Conectando com a chave do Google
+genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+model = genai.GenerativeModel('gemini-1.5-flash')
 
-# Lendo o arquivo que você subiu (base.txt)
+# Lendo sua base de conhecimento
 with open("base.txt", "r", encoding="utf-8") as f:
     conhecimento = f.read()
 
-# Menu lateral para enviar arquivos
-st.sidebar.header("Avaliação de Arquivos")
-arquivo_equipe = st.sidebar.file_uploader("Suba um arquivo para conferir", type=["txt", "pdf"])
-
-# Chat propriamente dito
+# Chat
 if "mensagens" not in st.session_state:
     st.session_state.mensagens = []
 
@@ -30,17 +26,11 @@ if pergunta := st.chat_input("Como posso ajudar?"):
         st.markdown(pergunta)
 
     with st.chat_message("assistant"):
-        contexto = f"Base de conhecimento: {conhecimento}"
-        if arquivo_equipe:
-            contexto += f"\nArquivo enviado pelo usuário: {arquivo_equipe.name}"
+        # Criando o contexto para o Gemini
+        prompt_completo = f"Base de conhecimento: {conhecimento}\n\nPergunta do usuário: {pergunta}"
         
-        resposta = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": f"Você é um assistente prestativo. Baseie-se nisto: {contexto}"},
-                *st.session_state.mensagens
-            ]
-        )
-        texto_ai = resposta.choices[0].message.content
+        response = model.generate_content(prompt_completo)
+        texto_ai = response.text
+        
         st.markdown(texto_ai)
         st.session_state.mensagens.append({"role": "assistant", "content": texto_ai})
