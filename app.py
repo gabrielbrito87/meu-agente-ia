@@ -4,12 +4,13 @@ from google.generativeai import caching
 import datetime
 import PyPDF2
 
-# --- CONFIGURAÇÃO ---
+# --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Agente de Elite ⚡", page_icon="🤖", layout="wide")
 
-# --- LOGIN ---
+# --- SISTEMA DE LOGIN ---
 def check_password():
-    if st.session_state.get("authenticated"): return True
+    if st.session_state.get("authenticated"):
+        return True
     st.title("🔐 Acesso Restrito")
     u = st.text_input("Usuário")
     p = st.text_input("Senha", type="password")
@@ -17,84 +18,98 @@ def check_password():
         if u == st.secrets["LOGIN_USER"] and p == st.secrets["LOGIN_PASSWORD"]:
             st.session_state.authenticated = True
             st.rerun()
-        else: st.error("Dados incorretos.")
+        else:
+            st.error("Dados incorretos.")
     return False
 
+# Só executa o resto se estiver logado
 if check_password():
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
-    # --- GERENCIADOR DE CACHE DINÂMICO ---
+    # --- CONFIGURAÇÃO DA IA ---
     @st.cache_resource(ttl=3600)
-    def configurar_ai_dinamico(texto_base):
-        CACHE_DISPLAY_NAME = "cache_equipe_final"
-        
-        # Em 2026, tentamos primeiro o nome estável simples
-        MODELO_NOME = "gemini-1.5-flash" 
+    def configurar_ai(texto_base):
+        # Nome do modelo corrigido para evitar erro 404 em 2026
+        MODELO_NOME = "gemini-1.5-flash"
         
         try:
-            # 1. Tenta listar caches existentes para reaproveitar
+            # Tentativa de usar Cache para economizar recursos
+            CACHE_NAME = "cache_agente_elite"
             for c in caching.CachedContent.list():
-                if c.display_name == CACHE_DISPLAY_NAME:
+                if c.display_name == CACHE_NAME:
                     return genai.GenerativeModel.from_cached_content(cached_content=c)
             
-            # 2. Tenta criar o cache (Isso requer Billing/Faturamento ativo no Google Cloud)
-            with st.spinner("⚡ Otimizando memória (Context Caching)..."):
+            with st.spinner("⚡ Preparando cérebro da IA..."):
                 novo_cache = caching.CachedContent.create(
                     model=f"models/{MODELO_NOME}",
-                    display_name=CACHE_DISPLAY_NAME,
+                    display_name=CACHE_NAME,
                     contents=[texto_base],
                     ttl=datetime.timedelta(hours=24),
                 )
                 return genai.GenerativeModel.from_cached_content(cached_content=novo_cache)
-        
-        except Exception as e:
-            # SE DER ERRO 404 OU QUALQUER OUTRO NO CACHE:
-            # Ele cai aqui e usa o modelo normal, sem frescuras.
-            st.sidebar.warning("Aviso: Usando modo direto (sem otimização de cache).")
-            # Tentamos o modelo sem o prefixo 'models/' caso o erro persista
+        except Exception:
+            # Plano B: Se o cache falhar, usa o modelo normal
             return genai.GenerativeModel(model_name=MODELO_NOME)
 
-    # --- CARREGAMENTO ---
+    # --- CARREGAR BASE DE CONHECIMENTO ---
     try:
         with open("base.txt", "r", encoding="utf-8") as f:
             base_conteudo = f.read()
-    except:
-        st.error("Arquivo base.txt não encontrado no GitHub.")
+    except FileNotFoundError:
+        st.error("Erro: Arquivo base.txt não encontrado.")
         st.stop()
 
-    # Inicializa o modelo (com ou sem cache, dependendo do sucesso acima)
-    model = configurar_ai_dinamico(base_conteudo)
+    model = configurar_ai(base_conteudo)
 
-    # --- INTERFACE ---
+    # --- INTERFACE DO USUÁRIO ---
     st.markdown("<h1 style='text-align: center;'>🤖 Assistente Inteligente</h1>", unsafe_allow_html=True)
     
     with st.sidebar:
         st.header("⚙️ Painel de Controle")
-        st.info(f"Base carregada: {len(base_conteudo):,} caracteres")
-        pdf_file = st.file_uploader("Auditar PDF Extra", type=["pdf"])
+        st.info(f"Base: {len(base_conteudo):,} caracteres")
+        pdf_file = st.file_uploader("Upload de PDF Extra", type=["pdf"])
         if st.button("Sair"):
             st.session_state.authenticated = False
             st.rerun()
 
-    # Processamento de PDF (se houver)
+    # Processar PDF se enviado
     extra_text = ""
     if pdf_file:
-        try:
-            reader = PyPDF2.PdfReader(pdf_file)
-            extra_text = "\n".join([p.extract_text() for p in reader.pages if p.extract_text()])
-            st.toast("PDF lido com sucesso!")
-        except Exception as e:
-            st.error(f"Erro ao ler PDF: {e}")
+        reader = PyPDF2.PdfReader(pdf_file)
+        extra_text = "\n".join([p.extract_text() for p in reader.pages if p.extract_text()])
+        st.toast("PDF lido com sucesso!")
 
-    # --- SISTEMA DE CHAT ---
-    if "messages" not in st.session_state: 
+    # --- CHAT ---
+    if "messages" not in st.session_state:
         st.session_state.messages = []
 
-    # Mostra o histórico
+    # Mostrar histórico
     for m in st.session_state.messages:
-        with st.chat_message(m["role"]): 
+        with st.chat_message(m["role"]):
             st.markdown(m["content"])
 
+    # Nova pergunta
+    if prompt := st.chat_input("Como posso ajudar?"):
+        # Adiciona pergunta do usuário ao histórico
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        
+        # Mostra o balão do usuário
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        # Gera e mostra a resposta da IA
+        with st.chat_message("assistant"):
+            try:
+                # Combinar contexto do PDF com a pergunta
+                contexto_final = f"PDF: {extra_text}\n\nPergunta: {prompt}" if extra_text else prompt
+                
+                response = model.generate_content(contexto_final)
+                texto_resposta = response.text
+                
+                st.markdown(texto_resposta)
+                st.session_state.messages.append({"role": "assistant", "content": texto_resposta})
+            except Exception as e:
+                st.error(f"Erro ao gerar resposta: {e}")
     # Entrada do usuário
     if prompt := st.chat_input("Como posso ajudar?"):
         st.session_state.messages.append({"role": "user", "content": prompt})
