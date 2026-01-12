@@ -7,7 +7,7 @@ import PyPDF2
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Agente de Elite ⚡", page_icon="🤖", layout="wide")
 
-# --- LOGIN (Mantido) ---
+# --- LOGIN ---
 def check_password():
     if st.session_state.get("authenticated"): return True
     st.title("🔐 Acesso Restrito")
@@ -27,28 +27,19 @@ if check_password():
     @st.cache_resource(ttl=3600)
     def configurar_ai_dinamico(texto_base):
         CACHE_DISPLAY_NAME = "cache_equipe_final"
+        # Usamos uma versão específica que suporta cache obrigatoriamente
+        MODELO_ESTAVEL = "models/gemini-1.5-flash-001"
         
         try:
-            # 1. Busca automática pelo modelo que suporta cache em 2026
-            modelo_valido = None
-            for m in genai.list_models():
-                # Procuramos versões estáveis (com números no final) que sejam Flash
-                if 'gemini-1.5-flash' in m.name and any(char.isdigit() for char in m.name):
-                    modelo_valido = m.name
-                    break
-            
-            if not modelo_valido:
-                modelo_valido = "models/gemini-1.5-flash" # Último recurso
-
-            # 2. Verifica se já existe um cache para não gastar
+            # 1. Verifica se já existe um cache para evitar gastos duplicados
             for c in caching.CachedContent.list():
                 if c.display_name == CACHE_DISPLAY_NAME:
                     return genai.GenerativeModel.from_cached_content(cached_content=c)
             
-            # 3. Cria o cache com o modelo que encontramos
-            with st.spinner(f"⚡ Otimizando memória com {modelo_valido}..."):
+            # 2. Cria o cache com o modelo específico -001
+            with st.spinner(f"⚡ Otimizando memória com {MODELO_ESTAVEL}..."):
                 novo_cache = caching.CachedContent.create(
-                    model=modelo_valido,
+                    model=MODELO_ESTAVEL,
                     display_name=CACHE_DISPLAY_NAME,
                     contents=[texto_base],
                     ttl=datetime.timedelta(hours=24),
@@ -56,8 +47,10 @@ if check_password():
                 return genai.GenerativeModel.from_cached_content(cached_content=novo_cache)
         
         except Exception as e:
-            st.sidebar.warning(f"Modo normal (sem cache): {e}")
-            return genai.GenerativeModel("models/gemini-1.5-flash")
+            # Se o cache falhar (por falta de billing ou erro de modelo), usamos o modo normal
+            # Importante: O nome do modelo aqui também deve ser o completo
+            st.sidebar.warning("Modo normal ativado (sem cache).")
+            return genai.GenerativeModel(MODELO_ESTAVEL)
 
     # --- CARREGAMENTO ---
     try:
