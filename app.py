@@ -29,25 +29,26 @@ if check_password():
     # --- 3. CONFIGURAÇÃO DA IA ---
     @st.cache_resource(ttl=3600)
     def configurar_ai(texto_base):
-        MODELO_NOME = "gemini-1.5-flash"
+        # Mudamos para 'latest' para garantir compatibilidade
+        MODELO_NOME = "gemini-1.5-flash-latest" 
+        
         try:
             CACHE_NAME = "cache_agente_elite"
-            # Tenta reutilizar um cache existente
+            # Tenta listar caches
             for c in caching.CachedContent.list():
                 if c.display_name == CACHE_NAME:
                     return genai.GenerativeModel.from_cached_content(cached_content=c)
             
-            # Se não existir, tenta criar
-            with st.spinner("⚡ Otimizando base de conhecimento..."):
+            with st.spinner("⚡ Otimizando base..."):
                 novo_cache = caching.CachedContent.create(
-                    model=f"models/{MODELO_NOME}",
+                    model=f"models/{MODELO_NOME}", # Com prefixo para o cache
                     display_name=CACHE_NAME,
                     contents=[texto_base],
                     ttl=datetime.timedelta(hours=24),
                 )
                 return genai.GenerativeModel.from_cached_content(cached_content=novo_cache)
         except Exception:
-            # Se der erro no cache, usa o modelo normal (Plano B)
+            # Plano B: Tenta sem o prefixo 'models/' se o cache falhar
             return genai.GenerativeModel(model_name=MODELO_NOME)
 
     # --- 4. CARREGAR ARQUIVO BASE ---
