@@ -1,66 +1,90 @@
 import streamlit as st
 import google.generativeai as genai
 
-# Configuração visual
-st.set_page_config(page_title="Agente de Qualidade", layout="wide")
-st.title("🤖 Assistente e Avaliador da Equipe")
+st.set_page_config(page_title="Agente de Equipe", layout="wide")
+st.title("🤖 Assistente de Consultas e Arquivos")
 
-# 1. Configuração da IA
+# 1. Configuração da API com busca automática de modelo
+if "GOOGLE_API_KEY" not in st.secrets:
+    st.error("Configure a GOOGLE_API_KEY nos Secrets do Streamlit!")
+    st.stop()
+
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-model = genai.GenerativeModel('gemini-1.5-flash')
 
-# 2. Carregar Base de Conhecimento
+@st.cache_resource
+def carregar_modelo():
+    # Lista de nomes que o Google costuma usar para o modelo Flash
+    tentativas = ['gemini-1.5-flash', 'models/gemini-1.5-flash', 'gemini-1.5-flash-latest']
+    
+    for nome in tentativas:
+        try:
+            m = genai.GenerativeModel(nome)
+            # Testa se o modelo responde
+            m.generate_content("oi", generation_config={"max_output_tokens": 1})
+            return m
+        except:
+            continue
+    
+    # Se falhar nos nomes fixos, tenta pegar o primeiro disponível na sua conta
+    try:
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                return genai.GenerativeModel(m.name)
+    except:
+        pass
+    return None
+
+model = carregar_modelo()
+
+if model is None:
+    st.error("Não foi possível conectar a nenhum modelo Gemini. Verifique sua chave API.")
+    st.stop()
+
+# 2. Ler a Base de Conhecimento
 try:
     with open("base.txt", "r", encoding="utf-8") as f:
         conhecimento = f.read()
-    st.sidebar.success(f"✅ Base carregada: {len(conhecimento)} caracteres")
+    st.sidebar.success("✅ Base de conhecimento ativa")
 except:
-    st.sidebar.error("❌ Arquivo base.txt não encontrado!")
-    conhecimento = ""
+    st.sidebar.error("❌ Arquivo base.txt não encontrado")
+    conhecimento = "Sem base de conhecimento carregada."
 
-# 3. Upload de arquivos para avaliação (A função que você queria!)
+# 3. Upload de arquivo para avaliação
 st.sidebar.divider()
-st.sidebar.header("Avaliar Documento")
-arquivo_subido = st.sidebar.file_uploader("Suba um arquivo para conferência", type=["txt", "pdf", "docx"])
+arquivo_equipe = st.sidebar.file_uploader("Enviar arquivo para conferência", type=["txt", "pdf"])
+conteudo_extra = ""
+if arquivo_equipe:
+    conteudo_extra = arquivo_equipe.read().decode("utf-8", errors="ignore")
+    st.sidebar.info(f"Analisando: {arquivo_equipe.name}")
 
-conteudo_do_arquivo = ""
-if arquivo_subido:
-    conteudo_do_arquivo = arquivo_subido.read().decode("utf-8", errors="ignore")
-    st.sidebar.info("Arquivo pronto para análise.")
-
-# 4. Interface do Chat
+# 4. Chat
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
-if prompt := st.chat_input("Ex: Este arquivo está correto? / Como faço para..."):
+if prompt := st.chat_input("Como posso ajudar?"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        # O SEGREDO: Instrução detalhada (System Prompt)
-        contexto_sistema = f"""
-        Você é um Assistente Colaborativo de elite. Sua missão é ajudar a equipe com base nestas regras:
-        ---
-        {conhecimento}
-        ---
-        REGRAS DE OURO:
-        1. Se o usuário enviar um arquivo para análise (abaixo), compare-o com a base de conhecimento e diga o que está errado.
-        2. Se a resposta não estiver na base, diga educadamente que não possui essa informação.
-        3. Seja direto e profissional.
-
-        ARQUIVO PARA ANALISAR AGORA (se houver): {conteudo_do_arquivo}
+        # Instrução personalizada (O "Cérebro" do Agente)
+        prompt_sistema = f"""
+        Você é um assistente especializado. 
+        Sua base de conhecimento é: {conhecimento}
+        
+        Se houver um arquivo enviado abaixo, compare-o com a base e diga se está correto:
+        {conteudo_extra}
+        
+        Pergunta do usuário: {prompt}
         """
         
         try:
-            # Enviamos a instrução pesada e a pergunta do usuário
-            response = model.generate_content([contexto_sistema, prompt])
-            
+            response = model.generate_content(prompt_sistema)
             st.markdown(response.text)
             st.session_state.messages.append({"role": "assistant", "content": response.text})
         except Exception as e:
-            st.error(f"Erro ao processar: {e}")
+            st.error(f"Erro na resposta: {e}")
